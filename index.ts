@@ -429,6 +429,8 @@ You MUST use tools to gather info first, then output JSON persona with this exac
         seeded_x_posts: seedX.length,
         seeded_web_results: seedWeb.length,
         web_queries: webQueries,
+        seedWeb,            // ✅ add this
+        seedX_sample: seedX.slice(0, 5)
       },
     });
   } catch (e) {
