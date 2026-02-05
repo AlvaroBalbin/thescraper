@@ -74,13 +74,21 @@ async function executeWebSearch(query: string, num_results: number) {
     body: JSON.stringify({
       q: query,
       num: Math.min(num_results, 20),
+      gl: "uk",
+      hl: "en",
     }),
   });
 
   const text = await res.text();
-  if (!res.ok) throw new Error(`Serper error ${res.status}: ${text}`);
+  if (!res.ok) throw new Error(`Serper error ${res.status}: ${text.slice(0, 400)}`);
 
-  const data = JSON.parse(text);
+  let data: any;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(`Serper returned non-JSON: ${text.slice(0, 200)}`);
+  }
+
   const organic = data.organic ?? [];
   return organic.slice(0, Math.min(num_results, 20)).map((r: any) => ({
     title: r.title ?? null,
@@ -195,7 +203,15 @@ serve(async (req) => {
   try {
     if (req.method !== "POST") return json(405, { error: "Method Not Allowed – use POST" });
 
-    const body = (await req.json()) as ReqBody;
+    // Read JSON safely (prevents Supabase/clients crashing on bad JSON)
+    const bodyText = await req.text();
+    let body: ReqBody;
+    try {
+      body = JSON.parse(bodyText);
+    } catch {
+      return json(400, { error: "Body was not valid JSON", bodyText });
+    }
+
     const linkedinUrl = body.linkedin_url?.trim() || null;
     const xUrl = body.x_url?.trim() || null;
 
@@ -242,7 +258,7 @@ serve(async (req) => {
     ];
 
     /* -------------------------------------------------
-      System prompt (keep yours, but nudge: only fill what’s evidenced)
+      System prompt (keep yours)
     -------------------------------------------------- */
     const systemPrompt = `
 You are a professional people researcher.
@@ -295,40 +311,55 @@ You MUST use tools to gather info first, then output JSON persona with this exac
 `;
 
     /* -------------------------------------------------
-      Seed data (get as much as possible)
+      Seed data (MORE LinkedIn queries, like your screenshots show)
     -------------------------------------------------- */
     const xHandle = extractXUsername(xUrl);
     const liSlug = extractLinkedInSlug(linkedinUrl);
 
     let seedX: any[] = [];
     let seedWeb: any[] = [];
+    const web_queries: string[] = [];
 
     // X: timeline-based via from:handle
     if (xHandle) {
       seedX = await executeXKeywordSearch(`from:${xHandle} -is:retweet`, 100, "Latest");
     }
 
-    // Web: multiple Serper queries for LinkedIn + mentions
-    const webQueries: string[] = [];
+    // Web: expand LinkedIn search a lot (still only public/indexed stuff)
     if (liSlug) {
-      webQueries.push(`site:linkedin.com/in/${liSlug}`);
-      webQueries.push(`site:linkedin.com/in/${liSlug} "About"`);
-      webQueries.push(`site:linkedin.com/in/${liSlug} "experience"`);
-      webQueries.push(`site:linkedin.com/in/${liSlug} "education"`);
-      webQueries.push(`"${liSlug}" site:linkedin.com`);
+      // profile variants
+      web_queries.push(`site:linkedin.com/in/${liSlug}`);
+      web_queries.push(`site:uk.linkedin.com/in/${liSlug}`);
+
+      // experience / education / about
+      web_queries.push(`site:linkedin.com/in/${liSlug} (About OR bio OR headline)`);
+      web_queries.push(`site:linkedin.com/in/${liSlug} (experience OR Experience)`);
+      web_queries.push(`site:linkedin.com/in/${liSlug} (education OR Education)`);
+
+      // activity / posts indexing
+      web_queries.push(`site:linkedin.com/in/${liSlug} (posts OR activity OR "recent activity")`);
+      web_queries.push(`site:linkedin.com/posts "${liSlug}"`);
+      web_queries.push(`site:linkedin.com/posts "${liSlug.replaceAll("-", " ")}"`);
+
+      // launch/project mentions
+      web_queries.push(`"${liSlug}" site:linkedin.com (Social Gravity OR Team Bath OR University of Bath)`);
+
+      // cached / mirrors sometimes show richer snippets
+      web_queries.push(`cache:linkedin.com/in/${liSlug}`);
+      web_queries.push(`"${liSlug}" "Co-founder" "University of Bath"`);
+
+      // broader discoverability
+      web_queries.push(`${liSlug} linkedin`);
+      web_queries.push(`${liSlug} portfolio`);
+      web_queries.push(`${liSlug} github`);
     } else if (linkedinUrl) {
-      webQueries.push(`site:linkedin.com/in ${linkedinUrl}`);
+      web_queries.push(`site:linkedin.com/in ${linkedinUrl}`);
     }
 
-    // Also look for a personal site or GitHub
-    if (liSlug) {
-      webQueries.push(`${liSlug} portfolio`);
-      webQueries.push(`${liSlug} github`);
-    }
-
-    for (const q of webQueries) {
+    for (const q of web_queries) {
       const r = await executeWebSearch(q, 10);
-      seedWeb.push(...r);
+      // attach query so you can see what worked
+      seedWeb.push(...r.map((x: any) => ({ ...x, _query: q })));
     }
 
     seedWeb = dedupeByLink(seedWeb);
@@ -428,9 +459,9 @@ You MUST use tools to gather info first, then output JSON persona with this exac
         seeded_linkedin_slug: liSlug,
         seeded_x_posts: seedX.length,
         seeded_web_results: seedWeb.length,
-        web_queries: webQueries,
-        seedWeb,            // ✅ add this
-        seedX_sample: seedX.slice(0, 5)
+        web_queries,
+        seedWeb,               // ✅ this is what you wanted
+        seedX_sample: seedX.slice(0, 5),
       },
     });
   } catch (e) {
