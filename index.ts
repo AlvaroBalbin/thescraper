@@ -1,5 +1,7 @@
 // index.ts (Deno server setup for Railway)
 import { serve } from "@std/http/server";
+import { DOMParser } from "https://deno.land/x/deno_dom@v0.1.45/deno-dom-wasm.ts";
+
 
 
 type ReqBody = {
@@ -261,4 +263,4 @@ Use tools to gather, then output JSON.
       { status: 500, headers: { "Content-Type": "application/json" } }
     );
   }
-}, { port: 8080 });
+}, { port });
