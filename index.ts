@@ -230,6 +230,14 @@ async function resolveXUserByUsername(username: string, bearer: string) {
   return mapTweetsToPosts(data.data || [], data.includes?.users);
 }
 
+function json(status: number, data: unknown) {
+  return new Response(JSON.stringify(data, null, 2), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+
 
     /* -------------------------------------------------
       TOOL DEFINITIONS
@@ -453,10 +461,12 @@ You MUST use tools to gather info first, then output JSON persona with this exac
       { headers: { "Content-Type": "application/json" } }
     );
   } catch (e) {
-    console.error(e);
-    return new Response(
-      JSON.stringify({ error: (e as Error).message || "Internal error" }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
-    );
-  }
+  console.error(e);
+  return json(500, {
+    error: (e as Error)?.message ?? String(e),
+    stack: (e as Error)?.stack ?? null,
+  });
+}
+
+
 }, { port });
