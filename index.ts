@@ -2,12 +2,14 @@
 import { serve } from "@std/http/server";
 import { DOMParser } from "https://deno.land/x/deno_dom@v0.1.45/deno-dom-wasm.ts";
 
-
+const port = Number(Deno.env.get("PORT") ?? "8080");
 
 type ReqBody = {
   linkedin_url?: string;
   x_url?: string;
 };
+
+
 
 serve(async (req) => {
   try {
