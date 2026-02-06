@@ -550,5 +550,5 @@ You MUST use tools to gather info first, then output JSON persona with this exac
       stack: (e as Error)?.stack ?? null,
     });
   }
-
+};
 Deno.serve({ port }, handler);
