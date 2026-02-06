@@ -109,34 +109,71 @@ async function executeWebSearch(query: string, num_results: number) {
 async function executeBrowsePage(url: string, instructions: string) {
   const lower = url.toLowerCase();
 
-  // Detect PDF by extension (fast path)
-  const isPdf = lower.endsWith(".pdf");
+  // ---------- helpers ----------
+  const looksLikePdfByExt = lower.endsWith(".pdf");
 
+  async function isPdfByHead(u: string): Promise<boolean> {
+    try {
+      const head = await fetchWithTimeout(u, { method: "HEAD" }, 10000);
+      const ct = (head.headers.get("content-type") || "").toLowerCase();
+      return ct.includes("application/pdf");
+    } catch {
+      return false; // if HEAD fails, don't hard-fail; we'll treat as HTML unless ext says pdf
+    }
+  }
+
+  // Detect PDF by extension OR by content-type
+  const isPdf = looksLikePdfByExt || await isPdfByHead(url);
+
+  // ---------- PDF path ----------
   if (isPdf) {
     const worker = Deno.env.get("PDF_WORKER_URL");
     if (!worker) throw new Error("Missing PDF_WORKER_URL");
 
     const endpoint = `${worker.replace(/\/$/, "")}/extract`;
+    console.log("[browse_page] PDF detected -> calling pdf-worker", { endpoint, url });
 
-    const resp = await fetchWithTimeout(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
-    }, 20000);
+    const resp = await fetchWithTimeout(
+      endpoint,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      },
+      20000,
+    );
 
-    const text = await resp.text();
-    if (!resp.ok) throw new Error(`pdf-worker error ${resp.status}: ${text.slice(0, 300)}`);
+    const raw = await resp.text();
+    if (!resp.ok) {
+      throw new Error(`pdf-worker error ${resp.status}: ${raw.slice(0, 300)}`);
+    }
 
-    const data = JSON.parse(text);
-    return data.text ?? "";
+    let data: any;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      throw new Error(`pdf-worker returned non-JSON: ${raw.slice(0, 300)}`);
+    }
+
+    return data?.text ?? "";
   }
 
-  // HTML
-  const res = await fetchWithTimeout(url, { headers: { "User-Agent": "Mozilla/5.0" } }, 20000);
-  if (!res.ok) throw new Error(`Browse error ${res.status}`);
+  // ---------- HTML path ----------
+  console.log("[browse_page] HTML fetch", { url });
 
-  const html = await res.text();
-  return html
+  const res = await fetchWithTimeout(
+    url,
+    { headers: { "User-Agent": "Mozilla/5.0" } },
+    20000,
+  );
+
+  const raw = await res.text();
+  if (!res.ok) {
+    // include a snippet so you can see if you're getting blocked / captcha / etc.
+    throw new Error(`Browse error ${res.status}: ${raw.slice(0, 300)}`);
+  }
+
+  return raw
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
     .replace(/<[^>]+>/g, " ")
@@ -551,4 +588,4 @@ You MUST use tools to gather info first, then output JSON persona with this exac
     });
   }
 };
-Deno.serve({ port }, handler);
+Deno.serve({ hostname: "0.0.0.0", port }, handler);
