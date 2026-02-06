@@ -1,15 +1,19 @@
 // index.ts (Deno server setup for Railway)
+
 const port = Number(Deno.env.get("PORT") ?? "8080");
+
 type ReqBody = {
   linkedin_url?: string;
   x_url?: string;
 };
+
 function json(status: number, data: unknown) {
   return new Response(JSON.stringify(data, null, 2), {
     status,
     headers: { "Content-Type": "application/json" },
   });
 }
+
 function extractXUsername(xUrl?: string | null): string | null {
   if (!xUrl) return null;
   try {
@@ -22,6 +26,7 @@ function extractXUsername(xUrl?: string | null): string | null {
     return null;
   }
 }
+
 function extractLinkedInSlug(linkedinUrl?: string | null): string | null {
   if (!linkedinUrl) return null;
   try {
@@ -34,12 +39,25 @@ function extractLinkedInSlug(linkedinUrl?: string | null): string | null {
     return null;
   }
 }
+
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 20000) {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+
 function extractFirstJson(text: string): string | null {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start === -1 || end === -1 || end <= start) return null;
   return text.slice(start, end + 1);
 }
+
 function dedupeByLink(items: any[]) {
   const m = new Map<string, any>();
   for (const it of items) {
@@ -49,6 +67,7 @@ function dedupeByLink(items: any[]) {
   }
   return Array.from(m.values());
 }
+
 /* -------------------------------------------------
   Serper Web Search (replaces Google HTML scraping)
 -------------------------------------------------- */
@@ -83,70 +102,50 @@ async function executeWebSearch(query: string, num_results: number) {
     snippet: r.snippet ?? null,
   }));
 }
-/* -------------------------------------------------
-  Helpers for Browse Page
--------------------------------------------------- */
-async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: number) {
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { ...options, signal: controller.signal });
-    clearTimeout(id);
-    return res;
-  } catch (e) {
-    clearTimeout(id);
-    throw e;
-  }
-}
-
-async function isPdfUrl(url: string): Promise<boolean> {
-  try {
-    const res = await fetchWithTimeout(url, { method: "HEAD" }, 10000);
-    const contentType = res.headers.get("content-type")?.toLowerCase() || "";
-    return contentType.includes("application/pdf");
-  } catch {
-    return false;
-  }
-}
 
 /* -------------------------------------------------
   New Browse Page (fetches full text; for PDFs uses pdf-parse)
 -------------------------------------------------- */
 async function executeBrowsePage(url: string, instructions: string) {
-  const u = url.toLowerCase();
-  const isPdf = u.endsWith(".pdf") || await isPdfUrl(url);
+  const lower = url.toLowerCase();
+
+  // Detect PDF by extension (fast path)
+  const isPdf = lower.endsWith(".pdf");
+
   if (isPdf) {
     const worker = Deno.env.get("PDF_WORKER_URL");
     if (!worker) throw new Error("Missing PDF_WORKER_URL");
-    const base = worker.replace(/\/$/, "");
-    const endpoint = `${base}/extract`;
+
+    const endpoint = `${worker.replace(/\/$/, "")}/extract`;
+
     const resp = await fetchWithTimeout(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url }),
     }, 20000);
+
     const text = await resp.text();
     if (!resp.ok) throw new Error(`pdf-worker error ${resp.status}: ${text.slice(0, 300)}`);
-    let data: any;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      throw new Error(`worker returned non-JSON: ${text.slice(0, 300)}`);
-    }
+
+    const data = JSON.parse(text);
     return data.text ?? "";
-  } else {
-    const res = await fetchWithTimeout(url, { headers: { "User-Agent": "Mozilla/5.0" } }, 20000);
-    if (!res.ok) throw new Error(`Browse error ${res.status}`);
-    const html = await res.text();
-    const cleaned = html
-      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-    return cleaned.slice(0, 80000);
   }
+
+  // HTML
+  const res = await fetchWithTimeout(url, { headers: { "User-Agent": "Mozilla/5.0" } }, 20000);
+  if (!res.ok) throw new Error(`Browse error ${res.status}`);
+
+  const html = await res.text();
+  return html
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80000);
 }
+
+
 /* -------------------------------------------------
   X API (timeline-first, replies included)
 -------------------------------------------------- */
@@ -165,6 +164,7 @@ async function xApiFetchJson(url: string, bearer: string) {
     throw new Error(`X API returned non-JSON: ${text.slice(0, 200)}`);
   }
 }
+
 async function resolveXUserByUsername(username: string, bearer: string) {
   const url =
     `https://api.twitter.com/2/users/by/username/${encodeURIComponent(username)}` +
@@ -173,6 +173,7 @@ async function resolveXUserByUsername(username: string, bearer: string) {
   if (!data?.data?.id) throw new Error(`X API: could not resolve user id for @${username}`);
   return data.data;
 }
+
 function mapTweetsToPosts(tweets: any[], includesUsers: any[] | undefined) {
   const users = new Map((includesUsers || []).map((u: any) => [u.id, u]));
   return (tweets || []).map((tweet: any) => {
@@ -191,6 +192,7 @@ function mapTweetsToPosts(tweets: any[], includesUsers: any[] | undefined) {
     };
   });
 }
+
 async function executeXKeywordSearch(query: string, limit: number, mode: "Top" | "Latest") {
   const bearer = Deno.env.get("X_BEARER_TOKEN");
   if (!bearer) throw new Error("Missing X_BEARER_TOKEN");
@@ -230,7 +232,8 @@ async function executeXKeywordSearch(query: string, limit: number, mode: "Top" |
   const data = await xApiFetchJson(url, bearer);
   return mapTweetsToPosts(data.data || [], data.includes?.users);
 }
-Deno.serve({ port }, async (req) => {
+
+const handler = async (req: Request) => {
   try {
     if (req.method !== "POST") return json(405, { error: "Method Not Allowed – use POST" });
     const bodyText = await req.text();
@@ -258,7 +261,7 @@ Deno.serve({ port }, async (req) => {
             type: "object",
             properties: {
               query: { type: "string" },
-              num_results: { type: "integer", default: 20 }, // Increased default
+              num_results: { type: "integer", default: 20 },
             },
             required: ["query"],
           },
@@ -273,7 +276,7 @@ Deno.serve({ port }, async (req) => {
             type: "object",
             properties: {
               query: { type: "string" },
-              limit: { type: "integer", default: 50 }, // Increased default
+              limit: { type: "integer", default: 50 },
               mode: { type: "string", enum: ["Top", "Latest"], default: "Latest" },
             },
             required: ["query"],
@@ -297,7 +300,7 @@ Deno.serve({ port }, async (req) => {
       },
     ];
     /* -------------------------------------------------
-      System prompt (updated to encourage deeper tool use)
+      System prompt (updated to force deeper tool use, especially for LinkedIn)
     -------------------------------------------------- */
     const systemPrompt = `
 You are a professional people researcher.
@@ -306,7 +309,8 @@ RULES:
 - Use tool outputs as evidence.
 - Output ONLY valid JSON. No markdown. No prose.
 - If a field cannot be supported by evidence, set it to null/[] and add it to "uncertainties".
-- If initial seeds are incomplete, use web_search for CVs (filetype:pdf), GitHub, portfolio details, and then browse_page on found URLs to extract full structured data (bios, roles, skills, projects).
+- ALWAYS use browse_page on the main LinkedIn profile URL, any LinkedIn post URLs found, CV PDFs, GitHub repos, and portfolio sites to extract full details (bios, roles, education, skills, projects, post texts). Do this even if seeds seem sufficient—snippets are incomplete.
+- If seeds are incomplete (e.g., truncated bios or missing roles), use web_search for more (e.g., "site:linkedin.com/posts [name] activity"), then browse those URLs.
 Input URLs:
 - LinkedIn: ${linkedinUrl ?? "Not provided"}
 - X: ${xUrl ?? "Not provided"}
@@ -359,7 +363,7 @@ You MUST use tools to gather info first, then output JSON persona with this exac
     }
     // Web: expand LinkedIn search a lot (still only public/indexed stuff)
     if (liSlug) {
-      // Your existing queries
+      // Existing queries
       web_queries.push(`site:linkedin.com/in/${liSlug}`);
       web_queries.push(`site:uk.linkedin.com/in/${liSlug}`);
       web_queries.push(`site:linkedin.com/in/${liSlug} (About OR bio OR headline)`);
@@ -378,11 +382,12 @@ You MUST use tools to gather info first, then output JSON persona with this exac
       web_queries.push(`site:linkedin.com/in ${linkedinUrl}`);
     }
     for (const q of web_queries) {
-      const r = await executeWebSearch(q, 20); // Increased to 20
+      const r = await executeWebSearch(q, 20);
       seedWeb.push(...r.map((x: any) => ({ ...x, _query: q })));
     }
     seedWeb = dedupeByLink(seedWeb);
-    // New: Extract full name from seedWeb (look in titles/snippets for patterns like "Name - Title")
+
+    // Extract full name from seedWeb
     let fullName = null;
     for (const item of seedWeb) {
       const titleMatch = item.title?.match(/^(.+?)\s*-\s*(Co-founder|Student|.+?)$/);
@@ -396,7 +401,8 @@ You MUST use tools to gather info first, then output JSON persona with this exac
         break;
       }
     }
-    // If name found, add deeper queries
+
+    // If name found, add deeper queries (more LinkedIn-post focused)
     const additional_queries = [];
     if (fullName) {
       additional_queries.push(`"${fullName}" CV filetype:pdf`);
@@ -406,12 +412,37 @@ You MUST use tools to gather info first, then output JSON persona with this exac
       additional_queries.push(`"${fullName}" portfolio site`);
       additional_queries.push(`"${fullName}" projects`);
       additional_queries.push(`"${fullName}" skills`);
+      // New: More for LinkedIn posts/activity
+      additional_queries.push(`site:linkedin.com/posts "${fullName}" activity`);
+      additional_queries.push(`"${fullName}" "recent activity" site:linkedin.com`);
+      additional_queries.push(`site:linkedin.com/in ${liSlug} activity`);
     }
     for (const q of additional_queries) {
       const r = await executeWebSearch(q, 20);
       seedWeb.push(...r.map((x: any) => ({ ...x, _query: q })));
     }
-    seedWeb = dedupeByLink(seedWeb); // Dedupe again
+    seedWeb = dedupeByLink(seedWeb);
+
+    // New: Pre-browse key URLs for depth (e.g., LinkedIn profile, posts, portfolio, CV)
+    const preBrowseUrls: string[] = [];
+    if (linkedinUrl) preBrowseUrls.push(linkedinUrl); // Always browse main LinkedIn
+    for (const item of seedWeb) {
+      const link = item.link;
+      if (link.includes('linkedin.com/posts') || link.includes('linkedin.com/in') || link.endsWith('.pdf') || link.includes('github.com') || link.includes('portfolio')) {
+        preBrowseUrls.push(link);
+      }
+    }
+    const uniquePreBrowse = [...new Set(preBrowseUrls.slice(0, 5))]; // Limit to 5 to avoid token overflow
+    const preBrowseResults: any[] = [];
+    for (const url of uniquePreBrowse) {
+      try {
+        const content = await executeBrowsePage(url, "Extract full bio, experience, education, skills, projects, post texts.");
+        preBrowseResults.push({ url, content: content.slice(0, 20000) }); // Truncate for size
+      } catch (e) {
+        preBrowseResults.push({ url, error: (e as Error)?.message });
+      }
+    }
+
     let messages: any[] = [
       { role: "system", content: systemPrompt },
       { role: "user", content: "Use the tools to gather evidence, then output the persona JSON." },
@@ -429,13 +460,19 @@ You MUST use tools to gather info first, then output JSON persona with this exac
             content: JSON.stringify(seedX),
           }]
         : []),
+      ...(preBrowseResults.length
+        ? preBrowseResults.map((res, idx) => ({
+            role: "tool",
+            tool_call_id: `seed_browse_${idx}`,
+            content: JSON.stringify(res),
+          }))
+        : []),
     ];
     /* -------------------------------------------------
       Grok loop (added handling for browse_page)
     -------------------------------------------------- */
     let content: string | null = null;
-    const browseDebug: any[] = []; // Collect debug for browse calls
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 15; i++) { // Increased to 15 for more chances
       const response = await fetch("https://api.x.ai/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -447,8 +484,8 @@ You MUST use tools to gather info first, then output JSON persona with this exac
           messages,
           tools,
           tool_choice: "auto",
-          temperature: 0.1,
-          max_tokens: 7000,
+          temperature: 0.2, // Slight increase for more tool exploration
+          max_tokens: 8192, // Increased if API supports
         }),
       });
       const text = await response.text();
@@ -465,20 +502,7 @@ You MUST use tools to gather info first, then output JSON persona with this exac
           } else if (toolCall.function.name === "x_keyword_search") {
             result = await executeXKeywordSearch(args.query, args.limit ?? 50, args.mode ?? "Latest");
           } else if (toolCall.function.name === "browse_page") {
-            const u = args.url.toLowerCase();
-            const isPdfDetected = u.endsWith(".pdf") || await isPdfUrl(args.url);
-            const worker = Deno.env.get("PDF_WORKER_URL");
-            const workerEndpoint = isPdfDetected && worker ? `${worker.replace(/\/$/, "")}/extract` : null;
-            try {
-              result = await executeBrowsePage(args.url, args.instructions ?? "");
-            } catch (e) {
-              result = { error: (e as Error)?.message ?? String(e) };
-            }
-            browseDebug.push({
-              requested_url: args.url,
-              is_pdf_detected: isPdfDetected,
-              worker_endpoint_used: workerEndpoint,
-            });
+            result = await executeBrowsePage(args.url, args.instructions ?? "");
           } else {
             result = { error: "Unknown tool" };
           }
@@ -509,13 +533,14 @@ You MUST use tools to gather info first, then output JSON persona with this exac
       debug: {
         seeded_x_handle: xHandle,
         seeded_linkedin_slug: liSlug,
-        extracted_full_name: fullName, // New debug
+        extracted_full_name: fullName,
         seeded_x_posts: seedX.length,
         seeded_web_results: seedWeb.length,
-        web_queries: [...web_queries, ...additional_queries], // Updated
-        seedWeb,
+        web_queries: [...web_queries, ...additional_queries],
+        seedWeb, 
         seedX_sample: seedX.slice(0, 5),
-        browse_debug: browseDebug, // Added
+        pre_browse_urls: uniquePreBrowse,
+        pre_browse_results: preBrowseResults.map(r => ({ url: r.url, content_length: r.content?.length ?? 0, error: r.error })), // Truncated for debug
       },
     });
   } catch (e) {
@@ -525,4 +550,5 @@ You MUST use tools to gather info first, then output JSON persona with this exac
       stack: (e as Error)?.stack ?? null,
     });
   }
-});
+
+Deno.serve({ port }, handler);
