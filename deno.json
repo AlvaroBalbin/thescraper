@@ -1,10 +1,10 @@
 {
-  "nodeModulesDir": "auto",
+  "nodeModulesDir": true,
   "lifecycle": true,
   "imports": {
     "puppeteer": "npm:puppeteer@^24.37.1"
   },
   "allowScripts": {
-    "allow": ["npm:puppeteer@24.37.1"]  
+    "allow": ["npm:puppeteer@24.37.1"]
   }
 }
