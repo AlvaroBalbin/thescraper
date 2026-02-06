@@ -6,8 +6,8 @@ WORKDIR /app
 # Copy deno.json first
 COPY deno.json .
 
-# Install npm:puppeteer with full permissions (required for postinstall + Chromium download)
-RUN deno add npm:puppeteer --allow-all
+# Install npm:puppeteer with script allowance (for postinstall to download Chromium)
+RUN deno add npm:puppeteer --allow-scripts
 
 # Copy the rest of your code
 COPY . .
@@ -17,5 +17,5 @@ RUN deno cache index.ts
 
 EXPOSE 8080
 
-# Run the server with full permissions
+# Run with full permissions (includes --allow-sys)
 CMD ["deno", "run", "--allow-net", "--allow-env", "--allow-run", "--allow-write", "--allow-read", "--allow-sys", "index.ts"]
