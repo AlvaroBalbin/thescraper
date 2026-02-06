@@ -1,20 +1,21 @@
-# Use official Deno image
+# Use the latest Deno image
 FROM denoland/deno:latest
 
-# Set working directory
 WORKDIR /app
 
-# Install Puppeteer Chromium during build
-RUN PUPPETEER_PRODUCT=chrome deno run -A --unstable https://deno.land/x/puppeteer@16.2.0/install.ts
+# Copy deno.json (for npm config)
+COPY deno.json .
 
-# Copy your TS code and deps
+# Install npm:puppeteer (auto-downloads Chromium via postinstall)
+RUN deno add npm:puppeteer
+
+# Copy the rest of your code
 COPY . .
 
-# Cache dependencies
+# Cache dependencies (creates fresh deno.lock)
 RUN deno cache index.ts
 
-# Expose port (Railway auto-detects or set via env)
 EXPOSE 8080
 
-# Run the server with all necessary permissions
+# Run with permissions
 CMD ["deno", "run", "--allow-net", "--allow-env", "--allow-run", "--allow-write", "--allow-read", "index.ts"]
