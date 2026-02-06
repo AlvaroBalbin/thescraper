@@ -1,5 +1,6 @@
 // index.ts (Deno server setup for Railway)
-import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { serve } from "@std/http/server";
+
 
 const port = Number(Deno.env.get("PORT") ?? "8080");
 
