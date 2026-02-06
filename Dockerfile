@@ -1,14 +1,14 @@
 # Use official Deno image
-FROM denoland/deno:1.40.0
+FROM denoland/deno:latest
 
 # Set working directory
 WORKDIR /app
 
-# Copy your TS code and deps
-COPY . .
-
 # Install Puppeteer Chromium during build
 RUN PUPPETEER_PRODUCT=chrome deno run -A --unstable https://deno.land/x/puppeteer@16.2.0/install.ts
+
+# Copy your TS code and deps
+COPY . .
 
 # Cache dependencies
 RUN deno cache index.ts
