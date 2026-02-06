@@ -1,5 +1,5 @@
 // index.ts (Deno server setup for Railway)
-import { serve } from "jsr:@std/http/server";
+import { serve } from "jsr:@std/http";
 const port = Number(Deno.env.get("PORT") ?? "8080");
 type ReqBody = {
   linkedin_url?: string;
