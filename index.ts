@@ -108,10 +108,8 @@ async function executeWebSearch(query: string, num_results: number) {
 -------------------------------------------------- */
 async function executeBrowsePage(url: string, instructions: string) {
   const lower = url.toLowerCase();
-
   // ---------- helpers ----------
   const looksLikePdfByExt = lower.endsWith(".pdf");
-
   async function isPdfByHead(u: string): Promise<boolean> {
     try {
       const head = await fetchWithTimeout(u, { method: "HEAD" }, 10000);
@@ -121,18 +119,14 @@ async function executeBrowsePage(url: string, instructions: string) {
       return false; // if HEAD fails, don't hard-fail; we'll treat as HTML unless ext says pdf
     }
   }
-
   // Detect PDF by extension OR by content-type
   const isPdf = looksLikePdfByExt || await isPdfByHead(url);
-
   // ---------- PDF path ----------
   if (isPdf) {
     const worker = Deno.env.get("PDF_WORKER_URL");
     if (!worker) throw new Error("Missing PDF_WORKER_URL");
-
     const endpoint = `${worker.replace(/\/$/, "")}/extract`;
     console.log("[browse_page] PDF detected -> calling pdf-worker", { endpoint, url });
-
     const resp = await fetchWithTimeout(
       endpoint,
       {
@@ -142,37 +136,61 @@ async function executeBrowsePage(url: string, instructions: string) {
       },
       20000,
     );
-
     const raw = await resp.text();
     if (!resp.ok) {
       throw new Error(`pdf-worker error ${resp.status}: ${raw.slice(0, 300)}`);
     }
-
     let data: any;
     try {
       data = JSON.parse(raw);
     } catch {
       throw new Error(`pdf-worker returned non-JSON: ${raw.slice(0, 300)}`);
     }
-
     return data?.text ?? "";
   }
 
   // ---------- HTML path ----------
-  console.log("[browse_page] HTML fetch", { url });
-
-  const res = await fetchWithTimeout(
-    url,
-    { headers: { "User-Agent": "Mozilla/5.0" } },
-    20000,
-  );
-
-  const raw = await res.text();
-  if (!res.ok) {
-    // include a snippet so you can see if you're getting blocked / captcha / etc.
-    throw new Error(`Browse error ${res.status}: ${raw.slice(0, 300)}`);
+ console.log("[browse_page] HTML fetch", { url });
+  const isLinkedIn = lower.includes("linkedin.com");
+  const headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
+    "Cache-Control": "max-age=0",
+  };
+  if (isLinkedIn) {
+    // Additional headers for LinkedIn to mimic browser more closely
+    headers["Referer"] = "https://www.google.com/";
+    headers["Connection"] = "keep-alive";
+    headers["DNT"] = "1"; // Do Not Track
   }
-
+  let res;
+  let attempts = 0;
+  const maxRetries = 3;
+  while (attempts < maxRetries) {
+    try {
+      res = await fetchWithTimeout(url, { headers }, 20000);
+      if (res.ok) break;
+      attempts++;
+      console.log(`[browse_page] Retry ${attempts}/${maxRetries} after error ${res.status}`);
+      await new Promise(resolve => setTimeout(resolve, 2000 * attempts)); // Exponential backoff
+    } catch (e) {
+      attempts++;
+      console.error(`[browse_page] Fetch attempt ${attempts} failed: ${e}`);
+      if (attempts >= maxRetries) throw e;
+    }
+  }
+  if (!res || !res.ok) {
+    const errText = await res?.text() ?? "";
+    throw new Error(`Browse error ${res?.status ?? "unknown"}: ${errText.slice(0, 300)}`);
+  }
+  const raw = await res.text();
   return raw
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
