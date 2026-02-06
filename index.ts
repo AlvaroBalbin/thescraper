@@ -1,21 +1,16 @@
 // index.ts (Deno server setup for Railway)
-import { serve } from "@std/http/server";
-
-
+import { serve } from "jsr:@std/http/server";
 const port = Number(Deno.env.get("PORT") ?? "8080");
-
 type ReqBody = {
   linkedin_url?: string;
   x_url?: string;
 };
-
 function json(status: number, data: unknown) {
   return new Response(JSON.stringify(data, null, 2), {
     status,
     headers: { "Content-Type": "application/json" },
   });
 }
-
 function extractXUsername(xUrl?: string | null): string | null {
   if (!xUrl) return null;
   try {
@@ -28,7 +23,6 @@ function extractXUsername(xUrl?: string | null): string | null {
     return null;
   }
 }
-
 function extractLinkedInSlug(linkedinUrl?: string | null): string | null {
   if (!linkedinUrl) return null;
   try {
@@ -41,14 +35,12 @@ function extractLinkedInSlug(linkedinUrl?: string | null): string | null {
     return null;
   }
 }
-
 function extractFirstJson(text: string): string | null {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start === -1 || end === -1 || end <= start) return null;
   return text.slice(start, end + 1);
 }
-
 function dedupeByLink(items: any[]) {
   const m = new Map<string, any>();
   for (const it of items) {
@@ -58,7 +50,6 @@ function dedupeByLink(items: any[]) {
   }
   return Array.from(m.values());
 }
-
 /* -------------------------------------------------
   Serper Web Search (replaces Google HTML scraping)
 -------------------------------------------------- */
@@ -93,45 +84,70 @@ async function executeWebSearch(query: string, num_results: number) {
     snippet: r.snippet ?? null,
   }));
 }
+/* -------------------------------------------------
+  Helpers for Browse Page
+-------------------------------------------------- */
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: number) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(id);
+    return res;
+  } catch (e) {
+    clearTimeout(id);
+    throw e;
+  }
+}
+
+async function isPdfUrl(url: string): Promise<boolean> {
+  try {
+    const res = await fetchWithTimeout(url, { method: "HEAD" }, 10000);
+    const contentType = res.headers.get("content-type")?.toLowerCase() || "";
+    return contentType.includes("application/pdf");
+  } catch {
+    return false;
+  }
+}
 
 /* -------------------------------------------------
   New Browse Page (fetches full text; for PDFs uses pdf-parse)
 -------------------------------------------------- */
 async function executeBrowsePage(url: string, instructions: string) {
   const u = url.toLowerCase();
-
-  // PDF → delegate to worker
-  if (u.endsWith(".pdf")) {
+  const isPdf = u.endsWith(".pdf") || await isPdfUrl(url);
+  if (isPdf) {
     const worker = Deno.env.get("PDF_WORKER_URL");
     if (!worker) throw new Error("Missing PDF_WORKER_URL");
-
-    const resp = await fetch(`${worker.replace(/\/$/, "")}/extract`, {
+    const base = worker.replace(/\/$/, "");
+    const endpoint = `${base}/extract`;
+    const resp = await fetchWithTimeout(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url }),
-    });
-
+    }, 20000);
     const text = await resp.text();
     if (!resp.ok) throw new Error(`pdf-worker error ${resp.status}: ${text.slice(0, 300)}`);
-
-    const data = JSON.parse(text);
+    let data: any;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(`worker returned non-JSON: ${text.slice(0, 300)}`);
+    }
     return data.text ?? "";
+  } else {
+    const res = await fetchWithTimeout(url, { headers: { "User-Agent": "Mozilla/5.0" } }, 20000);
+    if (!res.ok) throw new Error(`Browse error ${res.status}`);
+    const html = await res.text();
+    const cleaned = html
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    return cleaned.slice(0, 80000);
   }
-
-  // HTML → fetch + strip tags
-  const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
-  if (!res.ok) throw new Error(`Browse error ${res.status}`);
-
-  const html = await res.text();
-  return html
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
 }
-
-
 /* -------------------------------------------------
   X API (timeline-first, replies included)
 -------------------------------------------------- */
@@ -150,7 +166,6 @@ async function xApiFetchJson(url: string, bearer: string) {
     throw new Error(`X API returned non-JSON: ${text.slice(0, 200)}`);
   }
 }
-
 async function resolveXUserByUsername(username: string, bearer: string) {
   const url =
     `https://api.twitter.com/2/users/by/username/${encodeURIComponent(username)}` +
@@ -159,7 +174,6 @@ async function resolveXUserByUsername(username: string, bearer: string) {
   if (!data?.data?.id) throw new Error(`X API: could not resolve user id for @${username}`);
   return data.data;
 }
-
 function mapTweetsToPosts(tweets: any[], includesUsers: any[] | undefined) {
   const users = new Map((includesUsers || []).map((u: any) => [u.id, u]));
   return (tweets || []).map((tweet: any) => {
@@ -178,7 +192,6 @@ function mapTweetsToPosts(tweets: any[], includesUsers: any[] | undefined) {
     };
   });
 }
-
 async function executeXKeywordSearch(query: string, limit: number, mode: "Top" | "Latest") {
   const bearer = Deno.env.get("X_BEARER_TOKEN");
   if (!bearer) throw new Error("Missing X_BEARER_TOKEN");
@@ -218,7 +231,6 @@ async function executeXKeywordSearch(query: string, limit: number, mode: "Top" |
   const data = await xApiFetchJson(url, bearer);
   return mapTweetsToPosts(data.data || [], data.includes?.users);
 }
-
 serve(async (req) => {
   try {
     if (req.method !== "POST") return json(405, { error: "Method Not Allowed – use POST" });
@@ -371,7 +383,6 @@ You MUST use tools to gather info first, then output JSON persona with this exac
       seedWeb.push(...r.map((x: any) => ({ ...x, _query: q })));
     }
     seedWeb = dedupeByLink(seedWeb);
-
     // New: Extract full name from seedWeb (look in titles/snippets for patterns like "Name - Title")
     let fullName = null;
     for (const item of seedWeb) {
@@ -402,7 +413,6 @@ You MUST use tools to gather info first, then output JSON persona with this exac
       seedWeb.push(...r.map((x: any) => ({ ...x, _query: q })));
     }
     seedWeb = dedupeByLink(seedWeb); // Dedupe again
-
     let messages: any[] = [
       { role: "system", content: systemPrompt },
       { role: "user", content: "Use the tools to gather evidence, then output the persona JSON." },
@@ -425,6 +435,7 @@ You MUST use tools to gather info first, then output JSON persona with this exac
       Grok loop (added handling for browse_page)
     -------------------------------------------------- */
     let content: string | null = null;
+    const browseDebug: any[] = []; // Collect debug for browse calls
     for (let i = 0; i < 12; i++) {
       const response = await fetch("https://api.x.ai/v1/chat/completions", {
         method: "POST",
@@ -455,7 +466,20 @@ You MUST use tools to gather info first, then output JSON persona with this exac
           } else if (toolCall.function.name === "x_keyword_search") {
             result = await executeXKeywordSearch(args.query, args.limit ?? 50, args.mode ?? "Latest");
           } else if (toolCall.function.name === "browse_page") {
-            result = await executeBrowsePage(args.url, args.instructions ?? "");
+            const u = args.url.toLowerCase();
+            const isPdfDetected = u.endsWith(".pdf") || await isPdfUrl(args.url);
+            const worker = Deno.env.get("PDF_WORKER_URL");
+            const workerEndpoint = isPdfDetected && worker ? `${worker.replace(/\/$/, "")}/extract` : null;
+            try {
+              result = await executeBrowsePage(args.url, args.instructions ?? "");
+            } catch (e) {
+              result = { error: (e as Error)?.message ?? String(e) };
+            }
+            browseDebug.push({
+              requested_url: args.url,
+              is_pdf_detected: isPdfDetected,
+              worker_endpoint_used: workerEndpoint,
+            });
           } else {
             result = { error: "Unknown tool" };
           }
@@ -490,8 +514,9 @@ You MUST use tools to gather info first, then output JSON persona with this exac
         seeded_x_posts: seedX.length,
         seeded_web_results: seedWeb.length,
         web_queries: [...web_queries, ...additional_queries], // Updated
-        seedWeb, 
+        seedWeb,
         seedX_sample: seedX.slice(0, 5),
+        browse_debug: browseDebug, // Added
       },
     });
   } catch (e) {
