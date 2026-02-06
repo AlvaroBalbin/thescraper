@@ -1,4 +1,5 @@
 // index.ts (Deno server setup for Railway)
+import puppeteer from "https://deno.land/x/puppeteer@16.2.0/mod.ts"
 
 const port = Number(Deno.env.get("PORT") ?? "8080");
 
@@ -150,54 +151,61 @@ async function executeBrowsePage(url: string, instructions: string) {
   }
 
   // ---------- HTML path ----------
- console.log("[browse_page] HTML fetch", { url });
-  const isLinkedIn = lower.includes("linkedin.com");
-  const headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Sec-Fetch-User": "?1",
-    "Upgrade-Insecure-Requests": "1",
-    "Cache-Control": "max-age=0",
-  };
-  if (isLinkedIn) {
-    // Additional headers for LinkedIn to mimic browser more closely
-    headers["Referer"] = "https://www.google.com/";
-    headers["Connection"] = "keep-alive";
-    headers["DNT"] = "1"; // Do Not Track
-  }
-  let res;
-  let attempts = 0;
-  const maxRetries = 3;
-  while (attempts < maxRetries) {
-    try {
-      res = await fetchWithTimeout(url, { headers }, 20000);
-      if (res.ok) break;
-      attempts++;
-      console.log(`[browse_page] Retry ${attempts}/${maxRetries} after error ${res.status}`);
-      await new Promise(resolve => setTimeout(resolve, 2000 * attempts)); // Exponential backoff
-    } catch (e) {
-      attempts++;
-      console.error(`[browse_page] Fetch attempt ${attempts} failed: ${e}`);
-      if (attempts >= maxRetries) throw e;
+ // ---------- HTML path ----------
+console.log("[browse_page] HTML fetch", { url });
+const isLinkedIn = lower.includes("linkedin.com");
+const headers = {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+  "Accept-Language": "en-US,en;q=0.9",
+  "Accept-Encoding": "gzip, deflate, br",
+  "Sec-Fetch-Dest": "document",
+  "Sec-Fetch-Mode": "navigate",
+  "Sec-Fetch-Site": "none",
+  "Sec-Fetch-User": "?1",
+  "Upgrade-Insecure-Requests": "1",
+  "Cache-Control": "max-age=0",
+};
+if (isLinkedIn) {
+  headers["Referer"] = "https://www.google.com/";
+  headers["Connection"] = "keep-alive";
+  headers["DNT"] = "1";
+}
+let raw = '';
+let attempts = 0;
+const maxRetries = 3;
+while (attempts < maxRetries) {
+  try {
+    if (isLinkedIn) {
+      // Use Puppeteer for LinkedIn to render JS
+      const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+      const page = await browser.newPage();
+      await page.setExtraHTTPHeaders(headers);
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+      raw = await page.content();
+      await browser.close();
+    } else {
+      // Regular fetch for non-LinkedIn
+      const res = await fetchWithTimeout(url, { headers }, 20000);
+      raw = await res.text();
     }
+    if (raw.length > 0) break; // Success if content fetched
+    attempts++;
+    console.log(`[browse_page] Retry ${attempts}/${maxRetries}`);
+    await new Promise(resolve => setTimeout(resolve, 2000 * attempts));
+  } catch (e) {
+    attempts++;
+    console.error(`[browse_page] Attempt ${attempts} failed: ${e}`);
+    if (attempts >= maxRetries) throw new Error(`Browse failed after retries: ${e.message}`);
   }
-  if (!res || !res.ok) {
-    const errText = await res?.text() ?? "";
-    throw new Error(`Browse error ${res?.status ?? "unknown"}: ${errText.slice(0, 300)}`);
-  }
-  const raw = await res.text();
-  return raw
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 80000);
+}
+return raw
+  .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+  .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+  .replace(/<[^>]+>/g, " ")
+  .replace(/\s+/g, " ")
+  .trim()
+  .slice(0, 80000);
 }
 
 
