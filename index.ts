@@ -1,5 +1,4 @@
 // index.ts (Deno server setup for Railway)
-import { serve } from "jsr:@std/http";
 const port = Number(Deno.env.get("PORT") ?? "8080");
 type ReqBody = {
   linkedin_url?: string;
@@ -231,7 +230,7 @@ async function executeXKeywordSearch(query: string, limit: number, mode: "Top" |
   const data = await xApiFetchJson(url, bearer);
   return mapTweetsToPosts(data.data || [], data.includes?.users);
 }
-serve(async (req) => {
+Deno.serve({ port }, async (req) => {
   try {
     if (req.method !== "POST") return json(405, { error: "Method Not Allowed – use POST" });
     const bodyText = await req.text();
@@ -526,4 +525,4 @@ You MUST use tools to gather info first, then output JSON persona with this exac
       stack: (e as Error)?.stack ?? null,
     });
   }
-}, { port });
+});
