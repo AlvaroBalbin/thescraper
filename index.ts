@@ -1,5 +1,5 @@
 // index.ts (Deno server setup for Railway)
-import puppeteer from "https://deno.land/x/puppeteer@16.2.0/mod.ts"
+import puppeteer from "npm:puppeteer";
 
 const port = Number(Deno.env.get("PORT") ?? "8080");
 
@@ -177,13 +177,12 @@ const maxRetries = 3;
 while (attempts < maxRetries) {
   try {
     if (isLinkedIn) {
-      // Use Puppeteer for LinkedIn to render JS
-      const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
-      const page = await browser.newPage();
-      await page.setExtraHTTPHeaders(headers);
-      await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-      raw = await page.content();
-      await browser.close();
+    const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
+    const page = await browser.newPage();
+    await page.setExtraHTTPHeaders(headers);
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+    raw = await page.content();
+    await browser.close();
     } else {
       // Regular fetch for non-LinkedIn
       const res = await fetchWithTimeout(url, { headers }, 20000);

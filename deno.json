@@ -1,6 +1,10 @@
 {
+  "nodeModulesDir": "auto",
+  "lifecycle": true,
   "imports": {
-    "@std/http/server": "https://deno.land/std@0.224.0/http/server.ts"
+    "puppeteer": "npm:puppeteer@^24.37.1"
+  },
+  "allowScripts": {
+    "allow": ["npm:puppeteer@24.37.1"]  
   }
 }
-
