@@ -489,11 +489,24 @@ You MUST use tools to gather info first, then output JSON persona with this exac
     const preBrowseUrls: string[] = [];
     if (linkedinUrl) preBrowseUrls.push(linkedinUrl); // Always browse main LinkedIn
     for (const item of seedWeb) {
-      const link = item.link;
-      if (link.includes('linkedin.com/posts') || link.includes('linkedin.com/in') || link.endsWith('.pdf') || link.includes('github.com') || link.includes('portfolio')) {
-        preBrowseUrls.push(link);
-      }
-    }
+        const link = item.link;
+        if (
+            link.includes('linkedin.com/posts') ||
+            link.includes('linkedin.com/in') ||
+            link.endsWith('.pdf') ||
+            link.includes('github.com') ||
+            link.includes('portfolio') ||
+            link.includes('alvarobalbin.com') ||                 // ← your portfolio
+            (link.includes('.com') && !link.includes('linkedin.com') && link.length > 30)
+        ) {
+            preBrowseUrls.push(link);
+        }
+        }
+
+        // Always add the known portfolio (safe)
+        if (!preBrowseUrls.includes('https://alvarobalbin.com/')) {
+        preBrowseUrls.push('https://alvarobalbin.com/');
+        }
     const uniquePreBrowse = [...new Set(preBrowseUrls.slice(0, 5))]; // Limit to 5 to avoid token overflow
     const preBrowseResults: any[] = [];
     for (const url of uniquePreBrowse) {
