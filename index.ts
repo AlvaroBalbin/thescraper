@@ -1,6 +1,5 @@
 // index.ts (Deno server setup for Railway)
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
-import * as pdfParse from "https://deno.land/x/pdf_parse@0.0.3/mod.ts"; // Add for PDF text extraction
 
 const port = Number(Deno.env.get("PORT") ?? "8080");
 
@@ -98,23 +97,39 @@ async function executeWebSearch(query: string, num_results: number) {
   New Browse Page (fetches full text; for PDFs uses pdf-parse)
 -------------------------------------------------- */
 async function executeBrowsePage(url: string, instructions: string) {
-  // Note: instructions are passed but not used here; Grok-4 can "summarize" the raw content in its response.
-  // For real summarization, you'd need an LLM call, but this returns raw text for Grok to parse.
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Browse error ${res.status}`);
-  if (url.endsWith('.pdf')) {
-    const buffer = await res.arrayBuffer();
-    const pdfData = new Uint8Array(buffer);
-    const parsed = await pdfParse.default(pdfData);
-    return parsed.text; // Raw PDF text
-  } else {
-    const text = await res.text();
-    return text.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '') // Strip scripts for cleaner text
-               .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '') // Strip styles
-               .replace(/<[^>]+>/g, ' ') // Strip other tags
-               .replace(/\s+/g, ' ').trim(); // Normalize whitespace
+  const u = url.toLowerCase();
+
+  // PDF → delegate to worker
+  if (u.endsWith(".pdf")) {
+    const worker = Deno.env.get("PDF_WORKER_URL");
+    if (!worker) throw new Error("Missing PDF_WORKER_URL");
+
+    const resp = await fetch(`${worker.replace(/\/$/, "")}/extract`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+
+    const text = await resp.text();
+    if (!resp.ok) throw new Error(`pdf-worker error ${resp.status}: ${text.slice(0, 300)}`);
+
+    const data = JSON.parse(text);
+    return data.text ?? "";
   }
+
+  // HTML → fetch + strip tags
+  const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
+  if (!res.ok) throw new Error(`Browse error ${res.status}`);
+
+  const html = await res.text();
+  return html
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
+
 
 /* -------------------------------------------------
   X API (timeline-first, replies included)
