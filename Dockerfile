@@ -3,13 +3,14 @@ FROM denoland/deno:latest
 
 WORKDIR /app
 
-# === CRITICAL: Install all libraries Chromium needs ===
+# === CRITICAL: Install all libraries Chromium/Puppeteer needs (added libgobject-2.0-0 + extras) ===
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     fonts-liberation \
     libasound2 \
     libatk-bridge2.0-0 \
     libatk1.0-0 \
+    libatspi2.0-0 \
     libc6 \
     libcairo2 \
     libcups2 \
@@ -19,14 +20,17 @@ RUN apt-get update && apt-get install -y \
     libgbm1 \
     libgcc1 \
     libglib2.0-0 \
+    libgobject-2.0-0 \ 
     libgtk-3-0 \
     libnspr4 \
     libnss3 \
     libpango-1.0-0 \
     libpangocairo-1.0-0 \
     libstdc++6 \
+    libuuid1 \
     libx11-6 \
     libx11-xcb1 \
+    libxcb-dri3-0 \
     libxcb1 \
     libxcomposite1 \
     libxcursor1 \
@@ -34,6 +38,7 @@ RUN apt-get update && apt-get install -y \
     libxext6 \
     libxfixes3 \
     libxi6 \
+    libxkbcommon0 \
     libxrandr2 \
     libxrender1 \
     libxss1 \

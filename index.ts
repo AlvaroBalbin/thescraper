@@ -177,12 +177,19 @@ const maxRetries = 3;
 while (attempts < maxRetries) {
   try {
     if (isLinkedIn) {
-    const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
+  try {
+    const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
     const page = await browser.newPage();
     await page.setExtraHTTPHeaders(headers);
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
     raw = await page.content();
     await browser.close();
+  } catch (e) {
+    console.error(`Puppeteer failed: ${e}`);
+    // Fallback to regular fetch for partial content
+    const res = await fetchWithTimeout(url, { headers }, 20000);
+    raw = await res.text();
+  }
     } else {
       // Regular fetch for non-LinkedIn
       const res = await fetchWithTimeout(url, { headers }, 20000);
@@ -602,21 +609,21 @@ You MUST use tools to gather info first, then output JSON persona with this exac
       persona = JSON.parse(extracted);
     }
     return json(200, {
-      linkedin_url: linkedinUrl,
-      x_url: xUrl,
-      persona,
-      debug: {
+    linkedin_url: linkedinUrl,
+    x_url: xUrl,
+    persona,
+    debug: {
         seeded_x_handle: xHandle,
         seeded_linkedin_slug: liSlug,
         extracted_full_name: fullName,
         seeded_x_posts: seedX.length,
         seeded_web_results: seedWeb.length,
         web_queries: [...web_queries, ...additional_queries],
-        seedWeb, 
-        seedX_sample: seedX.slice(0, 5),
+        seedWeb: seedWeb.map(item => ({ title: item.title, link: item.link, snippet: item.snippet?.slice(0, 200) + '...', _query: item._query })),  // Truncate snippets
+        seedX_sample: seedX.slice(0, 5).map(post => ({ text: post.text.slice(0, 200) + '...', date: post.date, link: post.link })),  // Truncate posts
         pre_browse_urls: uniquePreBrowse,
-        pre_browse_results: preBrowseResults.map(r => ({ url: r.url, content_length: r.content?.length ?? 0, error: r.error })), // Truncated for debug
-      },
+        pre_browse_results: preBrowseResults.map(r => ({ url: r.url, content_length: r.content?.length ?? 0, error: r.error, content_sample: r.content?.slice(0, 500) + '...' })),  // Sample only
+    },
     });
   } catch (e) {
     console.error(e);
